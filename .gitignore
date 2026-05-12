@@ -1,0 +1,12 @@
+bin/
+obj/
+.vs/
+.idea/
+
+counter/
+mp3/
+settings.json
+
+*.user
+*.suo
+*.pdb
