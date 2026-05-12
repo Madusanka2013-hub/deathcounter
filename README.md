@@ -5,6 +5,12 @@ Ein anpassbarer DeathCounter für Streams, OBS und Chroma-Key-Setups.
 GitHub-Repository:
 [github.com/Madusanka2013-hub/deathcounter](https://github.com/Madusanka2013-hub/deathcounter)
 
+## Download
+
+Fertige Versionen findest du unter:
+
+[GitHub Releases](https://github.com/Madusanka2013-hub/deathcounter/releases)
+
 ## Vorschau
 
 <img src="img/1.png" alt="DeathCounter Hauptansicht" width="700">
