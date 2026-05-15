@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace DeathCounter;
 
 internal sealed class MainForm : Form
@@ -27,10 +29,13 @@ internal sealed class MainForm : Form
         loadItem.Click += (_, _) => SelectAndLoadCounter(false);
         var newItem = new ToolStripMenuItem("Neuen Counter anlegen");
         newItem.Click += (_, _) => SelectAndLoadCounter(true);
+        var editItem = new ToolStripMenuItem("Aktuellen Counter bearbeiten");
+        editItem.Click += (_, _) => EditCurrentCounter();
         var exitItem = new ToolStripMenuItem("Beenden");
         exitItem.Click += (_, _) => Close();
         fileItem.DropDownItems.Add(loadItem);
         fileItem.DropDownItems.Add(newItem);
+        fileItem.DropDownItems.Add(editItem);
         fileItem.DropDownItems.Add(new ToolStripSeparator());
         fileItem.DropDownItems.Add(exitItem);
 
@@ -42,6 +47,9 @@ internal sealed class MainForm : Form
         var helpItem = new ToolStripMenuItem("About");
         helpItem.Click += (_, _) => ShowAboutDialog();
 
+        var githubItem = new ToolStripMenuItem("Github");
+        githubItem.Click += (_, _) => OpenGithubPage();
+
         currentCounterItem = new ToolStripMenuItem("Kein Counter geladen")
         {
             Alignment = ToolStripItemAlignment.Right,
@@ -51,6 +59,7 @@ internal sealed class MainForm : Form
         menuStrip.Items.Add(fileItem);
         menuStrip.Items.Add(optionsItem);
         menuStrip.Items.Add(helpItem);
+        menuStrip.Items.Add(githubItem);
         menuStrip.Items.Add(currentCounterItem);
 
         counterDisplay = new CounterDisplayControl
@@ -96,11 +105,23 @@ internal sealed class MainForm : Form
         base.OnHandleDestroyed(e);
     }
 
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (HasLoadedCounter() && File.Exists(currentCounterFilePath))
+        {
+            currentProfile.Save(currentCounterFilePath);
+        }
+
+        appSettings.Save();
+        base.OnFormClosing(e);
+    }
+
     private void EnsureInitialCounterLoaded()
     {
-        if (!string.IsNullOrWhiteSpace(appSettings.LastCounterFilePath) && File.Exists(appSettings.LastCounterFilePath))
+        var lastCounterFilePath = ResolveLastCounterFilePath();
+        if (!string.IsNullOrWhiteSpace(lastCounterFilePath))
         {
-            LoadCounter(appSettings.LastCounterFilePath);
+            LoadCounter(lastCounterFilePath);
             return;
         }
 
@@ -131,16 +152,66 @@ internal sealed class MainForm : Form
     private void LoadCounter(string filePath)
     {
         currentProfile = CounterProfile.Load(filePath);
-        if (string.IsNullOrWhiteSpace(currentProfile.Name))
-        {
-            currentProfile.Name = Path.GetFileNameWithoutExtension(filePath);
-        }
-
         currentCounterFilePath = filePath;
         appSettings.LastCounterFilePath = filePath;
+        appSettings.LastCounterName = currentProfile.Name;
         appSettings.Save();
 
         RefreshCounterUi(false);
+        Text = $"Death Counter - {currentProfile.Name}";
+    }
+
+    private void EditCurrentCounter()
+    {
+        if (!HasLoadedCounter())
+        {
+            MessageBox.Show(
+                "Bitte zuerst einen Counter laden.",
+                "Kein Counter geladen",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new CounterEditorForm(
+            "Counter bearbeiten",
+            currentProfile.Name,
+            currentProfile.StartValue,
+            currentProfile.CounterValue);
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        var originalFilePath = currentCounterFilePath;
+        var updatedFilePath = CounterFileService.BuildCounterFilePath(appSettings.CountersDirectory, dialog.CounterName);
+        var shouldRenameFile = !string.Equals(originalFilePath, updatedFilePath, StringComparison.OrdinalIgnoreCase);
+
+        if (shouldRenameFile && File.Exists(updatedFilePath))
+        {
+            MessageBox.Show(
+                "Ein Counter mit diesem Namen existiert bereits.",
+                "Name bereits vorhanden",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        currentProfile.Name = dialog.CounterName;
+        currentProfile.StartValue = dialog.StartValue;
+        currentProfile.CounterValue = dialog.CurrentValue;
+
+        if (shouldRenameFile && File.Exists(originalFilePath))
+        {
+            File.Move(originalFilePath, updatedFilePath);
+            currentCounterFilePath = updatedFilePath;
+        }
+
+        SaveAndRefreshCounter(false);
+        appSettings.LastCounterFilePath = currentCounterFilePath;
+        appSettings.LastCounterName = currentProfile.Name;
+        appSettings.Save();
         Text = $"Death Counter - {currentProfile.Name}";
     }
 
@@ -177,6 +248,7 @@ internal sealed class MainForm : Form
             File.Exists(currentCounterFilePath))
         {
             appSettings.LastCounterFilePath = currentCounterFilePath;
+            appSettings.LastCounterName = currentProfile.Name;
         }
 
         appSettings.Save();
@@ -193,6 +265,15 @@ internal sealed class MainForm : Form
         dialog.ShowDialog(this);
 
         RegisterConfiguredHotkeys();
+    }
+
+    private static void OpenGithubPage()
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "https://github.com/Madusanka2013-hub/deathcounter",
+            UseShellExecute = true,
+        });
     }
 
     private void IncreaseCounter()
@@ -238,7 +319,7 @@ internal sealed class MainForm : Form
 
         BeginInvoke(() =>
         {
-            currentProfile.CounterValue = 0;
+            currentProfile.CounterValue = currentProfile.StartValue;
             SaveAndRefreshCounter(true);
         });
     }
@@ -310,4 +391,25 @@ internal sealed class MainForm : Form
 
     private string FormatCounterValue(int value) =>
         appSettings.UseThreeDigitCounterFormat ? value.ToString("000") : value.ToString();
+
+    private string ResolveLastCounterFilePath()
+    {
+        if (!string.IsNullOrWhiteSpace(appSettings.LastCounterFilePath) && File.Exists(appSettings.LastCounterFilePath))
+        {
+            return appSettings.LastCounterFilePath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(appSettings.LastCounterName))
+        {
+            var fallbackPath = CounterFileService.BuildCounterFilePath(appSettings.CountersDirectory, appSettings.LastCounterName);
+            if (File.Exists(fallbackPath))
+            {
+                appSettings.LastCounterFilePath = fallbackPath;
+                appSettings.Save();
+                return fallbackPath;
+            }
+        }
+
+        return string.Empty;
+    }
 }

@@ -20,6 +20,7 @@ internal sealed class AppSettings
     public string Mp3Directory { get; set; } = PortableMp3Directory;
     public int SoundVolumePercent { get; set; } = 70;
     public string LastCounterFilePath { get; set; } = string.Empty;
+    public string LastCounterName { get; set; } = string.Empty;
     public bool UseThreeDigitCounterFormat { get; set; }
     public string CounterFontFamily { get; set; } = "Segoe UI";
     public float CounterFontSize { get; set; } = 96f;
