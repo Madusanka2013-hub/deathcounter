@@ -6,28 +6,18 @@ namespace DeathCounter;
 
 internal sealed class AppSettings
 {
-    private const string AppFolderName = "DeathCounter";
-
     private static readonly string AppRootDirectory = ResolveAppRootDirectory();
-    private static readonly string LegacyPortableCounterDirectory = Path.Combine(AppRootDirectory, "counter");
-    private static readonly string LegacyPortableMp3Directory = Path.Combine(AppRootDirectory, "mp3");
-    private static readonly string LegacyPortableSettingsPath = Path.Combine(AppRootDirectory, "settings.json");
-
-    private static readonly string PersistentDataDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        AppFolderName);
-
-    private static readonly string PersistentCounterDirectory = Path.Combine(PersistentDataDirectory, "counter");
-    private static readonly string PersistentMp3Directory = Path.Combine(PersistentDataDirectory, "mp3");
-    private static readonly string PersistentSettingsPath = Path.Combine(PersistentDataDirectory, "settings.json");
+    private static readonly string PortableCounterDirectory = Path.Combine(AppRootDirectory, "counter");
+    private static readonly string PortableMp3Directory = Path.Combine(AppRootDirectory, "mp3");
+    private static readonly string PortableSettingsPath = Path.Combine(AppRootDirectory, "settings.json");
 
     public HotkeyBinding IncreaseHotkey { get; set; } = new(Keys.Up);
     public HotkeyBinding DecreaseHotkey { get; set; } = new(Keys.Down);
     public HotkeyBinding ResetHotkey { get; set; } = new(Keys.Delete);
     public HotkeyBinding StopSoundHotkey { get; set; } = new(Keys.End);
     public int BackgroundArgb { get; set; } = Color.LimeGreen.ToArgb();
-    public string CountersDirectory { get; set; } = PersistentCounterDirectory;
-    public string Mp3Directory { get; set; } = PersistentMp3Directory;
+    public string CountersDirectory { get; set; } = PortableCounterDirectory;
+    public string Mp3Directory { get; set; } = PortableMp3Directory;
     public int SoundVolumePercent { get; set; } = 70;
     public string LastCounterFilePath { get; set; } = string.Empty;
     public string LastCounterName { get; set; } = string.Empty;
@@ -55,16 +45,18 @@ internal sealed class AppSettings
         {
             EnsureStorageInitialized();
 
-            if (!File.Exists(PersistentSettingsPath))
+            if (!File.Exists(PortableSettingsPath))
             {
                 var freshSettings = new AppSettings();
                 freshSettings.Normalize();
+                freshSettings.Save();
                 return freshSettings;
             }
 
-            var json = File.ReadAllText(PersistentSettingsPath);
+            var json = File.ReadAllText(PortableSettingsPath);
             var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
             settings.Normalize();
+            settings.Save();
             return settings;
         }
         catch
@@ -78,24 +70,28 @@ internal sealed class AppSettings
     public void Save()
     {
         Normalize();
-        Directory.CreateDirectory(PersistentDataDirectory);
+        Directory.CreateDirectory(AppRootDirectory);
         Directory.CreateDirectory(CountersDirectory);
         Directory.CreateDirectory(Mp3Directory);
         var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(PersistentSettingsPath, json);
+        File.WriteAllText(PortableSettingsPath, json);
     }
 
     public void Normalize()
     {
-        if (string.IsNullOrWhiteSpace(CountersDirectory) || IsLegacyPortablePath(CountersDirectory, LegacyPortableCounterDirectory))
+        var originalCountersDirectory = CountersDirectory;
+
+        if (string.IsNullOrWhiteSpace(CountersDirectory))
         {
-            CountersDirectory = PersistentCounterDirectory;
+            CountersDirectory = PortableCounterDirectory;
         }
 
-        if (string.IsNullOrWhiteSpace(Mp3Directory) || IsLegacyPortablePath(Mp3Directory, LegacyPortableMp3Directory))
+        if (string.IsNullOrWhiteSpace(Mp3Directory))
         {
-            Mp3Directory = PersistentMp3Directory;
+            Mp3Directory = PortableMp3Directory;
         }
+
+        LastCounterFilePath = RemapLastCounterFilePath(originalCountersDirectory, CountersDirectory, LastCounterFilePath);
 
         SoundVolumePercent = Math.Clamp(SoundVolumePercent, 0, 100);
         CounterFontSize = Math.Clamp(CounterFontSize, 12f, 300f);
@@ -111,44 +107,42 @@ internal sealed class AppSettings
 
     private static void EnsureStorageInitialized()
     {
-        Directory.CreateDirectory(PersistentDataDirectory);
-        Directory.CreateDirectory(PersistentCounterDirectory);
-        Directory.CreateDirectory(PersistentMp3Directory);
-
-        if (!File.Exists(PersistentSettingsPath) && File.Exists(LegacyPortableSettingsPath))
-        {
-            File.Copy(LegacyPortableSettingsPath, PersistentSettingsPath, overwrite: false);
-        }
-
-        CopyMissingFiles(LegacyPortableCounterDirectory, PersistentCounterDirectory);
-        CopyMissingFiles(LegacyPortableMp3Directory, PersistentMp3Directory);
+        Directory.CreateDirectory(AppRootDirectory);
+        Directory.CreateDirectory(PortableCounterDirectory);
+        Directory.CreateDirectory(PortableMp3Directory);
     }
 
-    private static void CopyMissingFiles(string sourceDirectory, string targetDirectory)
+    private static string RemapLastCounterFilePath(string originalCountersDirectory, string newCountersDirectory, string lastCounterFilePath)
     {
-        if (!Directory.Exists(sourceDirectory))
+        if (string.IsNullOrWhiteSpace(lastCounterFilePath) || string.IsNullOrWhiteSpace(originalCountersDirectory))
         {
-            return;
+            return lastCounterFilePath;
         }
 
-        Directory.CreateDirectory(targetDirectory);
-
-        foreach (var sourceFilePath in Directory.GetFiles(sourceDirectory, "*", SearchOption.TopDirectoryOnly))
+        if (!IsPathInsideDirectory(lastCounterFilePath, originalCountersDirectory))
         {
-            var fileName = Path.GetFileName(sourceFilePath);
-            var targetFilePath = Path.Combine(targetDirectory, fileName);
-            if (!File.Exists(targetFilePath))
-            {
-                File.Copy(sourceFilePath, targetFilePath);
-            }
+            return lastCounterFilePath;
         }
+
+        var fileName = Path.GetFileName(lastCounterFilePath);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return lastCounterFilePath;
+        }
+
+        var remappedPath = Path.Combine(newCountersDirectory, fileName);
+        return File.Exists(remappedPath) ? remappedPath : lastCounterFilePath;
     }
 
-    private static bool IsLegacyPortablePath(string path, string legacyPath) =>
-        string.Equals(
-            Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-            Path.GetFullPath(legacyPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-            StringComparison.OrdinalIgnoreCase);
+    private static bool IsPathInsideDirectory(string filePath, string directoryPath)
+    {
+        var normalizedDirectory = NormalizePath(directoryPath) + Path.DirectorySeparatorChar;
+        var normalizedFilePath = NormalizePath(filePath);
+        return normalizedFilePath.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizePath(string path) =>
+        Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     private static string ResolveAppRootDirectory() =>
         AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
